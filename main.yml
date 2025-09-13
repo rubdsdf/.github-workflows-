@@ -26,13 +26,24 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Create Android project (no Python, safe heredocs)
+      # ──────────────────────────────────────────────────────────────────────────
+      # Genera el proyecto + gradle.properties con AndroidX activado
+      # ──────────────────────────────────────────────────────────────────────────
+      - name: Create Android project
         shell: bash
         run: |
           set -e
           mkdir -p M3UStream/app/src/main/java/com/example/m3ustream/{playlist,epg,player}
           mkdir -p M3UStream/app/src/main/res/values
           mkdir -p M3UStream/app/src/main/res/mipmap-anydpi-v26
+
+          # gradle.properties → AndroidX ON + suprimir warning de compileSdk 35
+          cat > M3UStream/gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g -Dkotlin.daemon.jvm.options=-Xmx1g
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.suppressUnsupportedCompileSdk=35
+          EOF
 
           cat > M3UStream/settings.gradle <<'EOF'
           pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -58,11 +69,9 @@ jobs:
           cat > M3UStream/app/build.gradle <<'EOF'
           apply plugin: 'com.android.application'
           apply plugin: 'org.jetbrains.kotlin.android'
-
           android {
               namespace 'com.example.m3ustream'
               compileSdkVersion 35
-
               defaultConfig {
                   applicationId "com.example.m3ustream"
                   minSdkVersion 26
@@ -72,7 +81,6 @@ jobs:
                   testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
                   vectorDrawables { useSupportLibrary true }
               }
-
               buildTypes {
                   release {
                       minifyEnabled false
@@ -80,34 +88,28 @@ jobs:
                   }
                   debug { minifyEnabled false }
               }
-
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
                   coreLibraryDesugaringEnabled true
               }
               kotlinOptions { jvmTarget = '17' }
-
               buildFeatures { compose true; buildConfig true }
               composeOptions { kotlinCompilerExtensionVersion '1.5.8' }
               packagingOptions { resources { excludes += '/META-INF/{AL2.0,LGPL2.1}' } }
           }
-
           dependencies {
               implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
               implementation 'androidx.core:core-ktx:1.13.1'
               implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
               implementation 'androidx.activity:activity-compose:1.9.2'
-
               implementation 'androidx.compose.ui:ui:1.6.8'
               implementation 'androidx.compose.ui:ui-tooling-preview:1.6.8'
               implementation 'androidx.compose.material3:material3:1.2.1'
               debugImplementation 'androidx.compose.ui:ui-tooling:1.6.8'
-
               implementation 'com.google.android.exoplayer:exoplayer:2.19.1'
               implementation 'com.google.android.exoplayer:extension-mediasession:2.19.1'
               implementation 'io.coil-kt:coil-compose:2.6.0'
-
               coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
           }
           EOF
@@ -141,9 +143,7 @@ jobs:
           EOF
 
           cat > M3UStream/app/src/main/res/values/strings.xml <<'EOF'
-          <resources>
-            <string name="app_name">M3UStream</string>
-          </resources>
+          <resources><string name="app_name">M3UStream</string></resources>
           EOF
 
           cat > M3UStream/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
@@ -153,7 +153,6 @@ jobs:
             <foreground android:drawable="@android:color/white"/>
           </adaptive-icon>
           EOF
-
           cat > M3UStream/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -162,7 +161,7 @@ jobs:
           </adaptive-icon>
           EOF
 
-          # Kotlin: App / Network / Prefs
+          # Kotlin base
           cat > M3UStream/app/src/main/java/com/example/m3ustream/App.kt <<'EOF'
           package com.example.m3ustream
           import android.app.Application
@@ -216,7 +215,6 @@ jobs:
           cat > M3UStream/app/src/main/java/com/example/m3ustream/playlist/M3UParser.kt <<'EOF'
           package com.example.m3ustream.playlist
           import java.util.Locale
-
           object M3UParser {
               private val hintMap = mapOf(
                   "ES" to "es","ESP" to "es","SPA" to "es","ESPAÑOL" to "es",
@@ -226,11 +224,8 @@ jobs:
                   "DE" to "de","GER" to "de","DEUTSCH" to "de",
                   "IT" to "it","ITA" to "it","ITALIANO" to "it"
               )
-
               fun parse(text: String): List<Channel> {
-                  val lines = text.split('\n')
-                  val out = mutableListOf<Channel>()
-                  var i = 0
+                  val lines = text.split('\n'); val out = mutableListOf<Channel>(); var i = 0
                   while (i < lines.size) {
                       val line = lines[i].trim()
                       if (line.startsWith("#EXTINF", true)) {
@@ -245,22 +240,20 @@ jobs:
                           while (j < lines.size) {
                               val l = lines[j].trim()
                               if (l.isNotEmpty() && !l.startsWith("#")) { url = l; break }
-                              j++
+                              j += 1
                           }
                           if (url.isNotBlank()) { out.add(Channel(name, url, logo, group, tvgId, langAttr ?: inferred)); i = j }
                       }
-                      i++
+                      i += 1
                   }
                   return out
               }
-
               private fun parseAttrs(info: String): Map<String,String> {
                   val m = mutableMapOf<String,String>()
                   val r = Regex("(\\w[\\w-]*)=\\\"(.*?)\\\"")
                   for (x in r.findAll(info)) m[x.groupValues[1]] = x.groupValues[2]
                   return m
               }
-
               private fun inferLanguageFromName(name: String): String? {
                   val u = name.uppercase(Locale.ROOT)
                   val token = Regex("[\\[(]([A-Z]{2,3})[)\\]]")
@@ -271,7 +264,7 @@ jobs:
           }
           EOF
 
-          # EPG (XMLTV) + Now/Next
+          # EPG
           cat > M3UStream/app/src/main/java/com/example/m3ustream/epg/EpgModels.kt <<'EOF'
           package com.example.m3ustream.epg
           data class EpgProgramme(val channelId:String,val title:String,val startMs:Long,val stopMs:Long)
@@ -286,10 +279,8 @@ jobs:
           import java.time.ZoneOffset
           import java.time.format.DateTimeFormatter
           import java.util.Locale
-
           class EpgRepository {
               private val map = mutableMapOf<String, MutableList<EpgProgramme>>()
-
               fun load(xmlText: String) {
                   map.clear()
                   val p = Xml.newPullParser()
@@ -312,16 +303,13 @@ jobs:
                   }
                   map.values.forEach { it.sortBy { x -> x.startMs } }
               }
-
               fun nowNext(key:String, now:Long=System.currentTimeMillis()): NowNext {
                   val l = map[key] ?: return NowNext(null,null)
                   var n:EpgProgramme?=null; var nx:EpgProgramme?=null
                   for (p in l) { if (p.startMs<=now && now<p.stopMs) n=p else if (p.startMs>now) { nx=p; break } }
                   return NowNext(n,nx)
               }
-
               fun hasDataFor(key:String) = map.containsKey(key)
-
               companion object {
                   private val F = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
                   fun parse(s:String?):Long{
@@ -336,7 +324,7 @@ jobs:
           }
           EOF
 
-          # Player (ExoPlayer + PIP)
+          # Player
           cat > M3UStream/app/src/main/java/com/example/m3ustream/player/PlayerScreen.kt <<'EOF'
           package com.example.m3ustream.player
           import android.app.Activity
@@ -352,7 +340,6 @@ jobs:
           import com.google.android.exoplayer2.MediaItem
           import com.google.android.exoplayer2.ui.StyledPlayerView
           import android.view.ViewGroup
-
           @Composable
           fun PlayerScreen(channel: Channel) {
               val ctx = LocalContext.current
@@ -373,10 +360,9 @@ jobs:
           }
           EOF
 
-          # MainActivity (M3U + Xtream + idioma + EPG + favoritos)
+          # MainActivity (corregidos 6.dp / 12.dp / 4.dp)
           cat > M3UStream/app/src/main/java/com/example/m3ustream/MainActivity.kt <<'EOF'
           package com.example.m3ustream
-
           import android.content.Context
           import android.os.Bundle
           import androidx.activity.ComponentActivity
@@ -441,7 +427,6 @@ jobs:
           class MainViewModel : ViewModel() {
               private val _uiState = mutableStateOf<UIState>(UIState.Input())
               val uiState: State<UIState> get() = _uiState
-
               fun loadFromM3U(context: Context, url: String, epgUrl: String?) = loadAll(url, epgUrl)
               fun loadFromXtream(context: Context, server:String, user:String, pass:String, output:String, epgUrl:String?) {
                   val base = server.trim().trimEnd('/')
@@ -506,11 +491,11 @@ jobs:
                       OutlinedTextField(value=user, onValueChange={user=it}, label={Text("Usuario")}, singleLine=true, modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
                       OutlinedTextField(value=pass, onValueChange={pass=it}, label={Text("Contraseña")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6	dp))
+                      Spacer(Modifier.height(6.dp))
                       OutlinedTextField(value=output, onValueChange={output=it}, label={Text("output (ts o hls)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6	dp))
+                      Spacer(Modifier.height(6.dp))
                       OutlinedTextField(value=epg, onValueChange={epg=it}, label={Text("EPG XMLTV (opcional)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(12	dp))
+                      Spacer(Modifier.height(12.dp))
                       val ok = server.text.startsWith("http") && user.text.isNotBlank() && pass.text.isNotBlank()
                       Button(onClick={ onLoad(server.text.trim(), user.text.trim(), pass.text.trim(), output.text.trim().ifBlank{"ts"}, epg.text.trim().ifBlank{null}) }, enabled=ok) { Text("Cargar") }
                   }
@@ -536,7 +521,7 @@ jobs:
                           FilterChip(selected=selectedLang==null, onClick={ selectedLang=null }, label={ Text("Todos") })
                           Spacer(Modifier.width(8.dp))
                           languages.forEach { lang ->
-                              Spacer(Modifier.width(4	dp))
+                              Spacer(Modifier.width(4.dp))
                               FilterChip(selected=selectedLang==lang, onClick={ selectedLang=lang }, label={ Text(lang.uppercase()) })
                           }
                       }
@@ -583,6 +568,7 @@ jobs:
           }
           EOF
 
+      # Genera el Gradle Wrapper (sí, usa la acción antigua solo para esto)
       - name: Generate Gradle Wrapper
         uses: gradle/gradle-build-action@v3
         with:
@@ -590,12 +576,12 @@ jobs:
           build-root-directory: M3UStream
           arguments: wrapper
 
+      # Compila usando el wrapper
       - name: Build Debug APK
-        uses: gradle/gradle-build-action@v3
-        with:
-          gradle-version: '8.2.1'
-          build-root-directory: M3UStream
-          arguments: assembleDebug
+        run: |
+          cd M3UStream
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
