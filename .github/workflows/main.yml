@@ -380,239 +380,300 @@ jobs:
 
           # MainActivity
           cat > M3UStream/app/src/main/java/com/example/m3ustream/MainActivity.kt <<'EOF'
-          package com.example.m3ustream
-          import android.content.Context
-          import android.os.Bundle
-          import androidx.activity.ComponentActivity
-          import androidx.activity.compose.setContent
-          import androidx.activity.viewModels
-          import androidx.compose.foundation.clickable
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.foundation.lazy.LazyColumn
-          import androidx.compose.foundation.lazy.items
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.Alignment
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.text.input.TextFieldValue
-          import androidx.compose.ui.unit.dp
-          import androidx.lifecycle.ViewModel
-          import androidx.lifecycle.viewModelScope
-          import coil.compose.AsyncImage
-          import com.example.m3ustream.player.PlayerScreen
-          import com.example.m3ustream.playlist.Channel
-          import com.example.m3ustream.playlist.M3UParser
-          import com.example.m3ustream.epg.EpgRepository
-          import kotlinx.coroutines.Dispatchers
-          import kotlinx.coroutines.launch
-          import kotlinx.coroutines.withContext
-          import java.net.URLEncoder
-          import java.nio.charset.StandardCharsets
+package com.example.m3ustream
 
-          class MainActivity : ComponentActivity() {
-              private val vm: MainViewModel by viewModels()
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  setContent {
-                      MaterialTheme(colorScheme = darkColorScheme()) {
-                          val state = vm.uiState.value
-                          var playing by remember { mutableStateOf<Channel?>(null) }
-                          if (playing != null) {
-                              PlayerScreen(channel = playing!!, onClose = { playing = null })
-                          } else {
-                              when (state) {
-                                  is UIState.Input -> InputScreen(
-                                      initial = state,
-                                      onLoadM3U = { url, epg -> vm.loadFromM3U(this, url, epg) },
-                                      onLoadXtream = { server, user, pass, output, epg ->
-                                          vm.loadFromXtream(this, server, user, pass, output, epg)
-                                      }
-                                  )
-                                  is UIState.ChannelList -> ChannelListScreen(
-                                      channels = state.channels,
-                                      epgRepo = state.epg,
-                                      favSetProvider = { Prefs.favs(this) },
-                                      onToggleFav = { key -> Prefs.toggleFav(this, key) },
-                                      onOpen = { ch -> playing = ch }
-                                  )
-                              }
-                          }
-                      }
-                  }
-              }
-          }
+import android.content.Context
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import coil.compose.AsyncImage
+import com.example.m3ustream.player.PlayerScreen
+import com.example.m3ustream.playlist.Channel
+import com.example.m3ustream.playlist.M3UParser
+import com.example.m3ustream.epg.EpgRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
-          sealed class UIState {
-              data class Input(
-                  val m3uUrl: String? = null, val epgUrl: String? = null,
-                  val xtServer: String? = null, val xtUser: String? = null, val xtPass: String? = null, val xtOutput: String = "ts"
-              ) : UIState()
-              data class ChannelList(val channels: List<Channel>, val epg: EpgRepository?) : UIState()
-          }
+class MainActivity : ComponentActivity() {
+    private val vm: MainViewModel by viewModels()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                val state = vm.uiState.collectAsState().value
+                var playing by remember { mutableStateOf<Channel?>(null) }
 
-          class MainViewModel : ViewModel() {
-              private val _uiState = mutableStateOf<UIState>(UIState.Input())
-              val uiState: State<UIState> get() = _uiState
-              fun loadFromM3U(context: Context, url: String, epgUrl: String?) = loadAll(url, epgUrl)
-              fun loadFromXtream(context: Context, server:String, user:String, pass:String, output:String, epgUrl:String?) {
-                  val base = server.trim().trimEnd('/')
-                  val m3u = "$base/get.php?username=${'$'}{enc(user)}&password=${'$'}{enc(pass)}&type=m3u_plus&output=${'$'}{enc(output)}"
-                  loadAll(m3u, epgUrl)
-              }
-              private fun enc(s:String) = URLEncoder.encode(s, StandardCharsets.UTF_8.name())
-              private fun loadAll(m3uUrl:String, epgUrl:String?) {
-                  viewModelScope.launch {
-                      val channels = withContext(Dispatchers.IO) {
-                          runCatching { M3UParser.parse(Network.fetchText(m3uUrl)) }.getOrElse { emptyList() }
-                      }
-                      val epgRepo = if (!epgUrl.isNullOrBlank()) withContext(Dispatchers.IO) {
-                          runCatching { EpgRepository().apply { load(Network.fetchText(epgUrl)) } }.getOrNull()
-                      } else null
-                      if (channels.isNotEmpty()) _uiState.value = UIState.ChannelList(channels, epgRepo)
-                  }
-              }
-          }
+                when {
+                    playing != null -> PlayerScreen(channel = playing!!, onClose = { playing = null })
+                    state is UIState.Loading -> LoadingScreen()
+                    state is UIState.ChannelList -> ChannelListScreen(
+                        channels = state.channels,
+                        epgRepo = state.epg,
+                        favSetProvider = { Prefs.favs(this) },
+                        onToggleFav = { key -> Prefs.toggleFav(this, key) },
+                        onOpen = { ch -> playing = ch }
+                    )
+                    state is UIState.Input -> InputScreen(
+                        state = state,
+                        onLoadM3U = { url, epg -> vm.loadFromM3U(this, url, epg) },
+                        onLoadXtream = { server, user, pass, output, epg ->
+                            vm.loadFromXtream(this, server, user, pass, output, epg)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
 
-          @Composable
-          fun InputScreen(initial: UIState.Input, onLoadM3U:(String,String?)->Unit, onLoadXtream:(String,String,String,String,String?)->Unit) {
-              var tab by remember { mutableStateOf(0) }
-              Column(Modifier.fillMaxSize()) {
-                  TabRow(selectedTabIndex = tab) {
-                      Tab(selected = tab==0, onClick={tab=0}, text={ Text("M3U") })
-                      Tab(selected = tab==1, onClick={tab=1}, text={ Text("Xtream") })
-                  }
-                  when (tab) {
-                      0 -> M3UTab(onLoad = onLoadM3U)
-                      1 -> XtreamTab(onLoad = onLoadXtream)
-                  }
-              }
-          }
+sealed class UIState {
+    data class Input(val error: String? = null) : UIState()
+    object Loading : UIState()
+    data class ChannelList(val channels: List<Channel>, val epg: EpgRepository?) : UIState()
+}
 
-          @OptIn(ExperimentalMaterial3Api::class)
-          @Composable
-          fun M3UTab(onLoad:(String,String?)->Unit) {
-              var url by remember { mutableStateOf(TextFieldValue("")) }
-              var epg by remember { mutableStateOf(TextFieldValue("")) }
-              Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                  Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                      OutlinedTextField(value=url, onValueChange={url=it}, label={Text("M3U/M3U8 URL")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(8.dp))
-                      OutlinedTextField(value=epg, onValueChange={epg=it}, label={Text("EPG XMLTV (opcional)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(12.dp))
-                      Button(onClick={ onLoad(url.text.trim(), epg.text.trim().ifBlank{ null }) }, enabled = url.text.startsWith("http")) { Text("Cargar") }
-                  }
-              }
-          }
+class MainViewModel : ViewModel() {
+    private val _ui = mutableStateOf<UIState>(UIState.Input())
+    val uiState: State<UIState> get() = _ui
 
-          @OptIn(ExperimentalMaterial3Api::class)
-          @Composable
-          fun XtreamTab(onLoad:(String,String,String,String,String?)->Unit) {
-              var server by remember { mutableStateOf(TextFieldValue("")) }
-              var user   by remember { mutableStateOf(TextFieldValue("")) }
-              var pass   by remember { mutableStateOf(TextFieldValue("")) }
-              var output by remember { mutableStateOf(TextFieldValue("ts")) }
-              var epg    by remember { mutableStateOf(TextFieldValue("")) }
-              Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                  Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                      OutlinedTextField(value=server, onValueChange={server=it}, label={Text("Servidor/DNS (http[s]://host)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
-                      OutlinedTextField(value=user, onValueChange={user=it}, label={Text("Usuario")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
-                      OutlinedTextField(value=pass, onValueChange={pass=it}, label={Text("Contraseña")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6	dp))
-                      OutlinedTextField(value=output, onValueChange={output=it}, label={Text("output (ts o hls)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6	dp))
-                      OutlinedTextField(value=epg, onValueChange={epg=it}, label={Text("EPG XMLTV (opcional)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(12	dp))
-                      val ok = server.text.startsWith("http") && user.text.isNotBlank() && pass.text.isNotBlank()
-                      Button(onClick={ onLoad(server.text.trim(), user.text.trim(), pass.text.trim(), output.text.trim().ifBlank{"ts"}, epg.text.trim().ifBlank{null}) }, enabled=ok) { Text("Cargar") }
-                  }
-              }
-          }
+    fun loadFromM3U(context: Context, url: String, epgUrl: String?) = loadAll(url, epgUrl)
 
-          @Composable
-          fun ChannelListScreen(
-              channels: List<Channel>,
-              epgRepo: EpgRepository?,
-              favSetProvider:()->Set<String>,
-              onToggleFav:(String)->Set<String>,
-              onOpen:(Channel)->Unit
-          ) {
-              var query by remember { mutableStateOf("") }
-              val languages = remember(channels) { channels.mapNotNull { it.language }.toSet().toList().sorted() }
-              var selectedLang by remember { mutableStateOf<String?>(null) }
-              var onlyFav by remember { mutableStateOf(false) }
-              val favs = remember { mutableStateOf(setOf<String>()) }
-              LaunchedEffect(Unit) { favs.value = favSetProvider() }
-              Column(Modifier.fillMaxSize()) {
-                  Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                      OutlinedTextField(value=query, onValueChange={query=it}, label={Text("Buscar")}, singleLine=true, modifier=Modifier.weight(1f))
-                      Spacer(Modifier.width(8	dp))
-                      AssistChip(onClick={ onlyFav = !onlyFav }, label={ Text(if (onlyFav) "Favoritos ✓" else "Favoritos") })
-                  }
-                  if (languages.isNotEmpty()) {
-                      Row(Modifier.padding(horizontal=8	dp, vertical=4	dp)) {
-                          FilterChip(selected=selectedLang==null, onClick={ selectedLang=null }, label={ Text("Todos") })
-                          Spacer(Modifier.width(8	dp))
-                          languages.forEach { lang ->
-                              Spacer(Modifier.width(4	dp))
-                              FilterChip(selected=selectedLang==lang, onClick={ selectedLang=lang }, label={ Text(lang.uppercase()) })
-                          }
-                      }
-                  }
-                  val filtered = channels.filter { ch ->
-                      val matchQ = ch.name.contains(query, true) || ch.group.contains(query, true)
-                      val matchLang = selectedLang?.let { ch.language == it } ?: true
-                      val key = ch.tvgId ?: ch.name
-                      val matchFav = if (onlyFav) favs.value.contains(key) else true
-                      matchQ && matchLang && matchFav
-                  }
-                  LazyColumn(Modifier.fillMaxSize()) {
-                      items(filtered) { ch ->
-                          ChannelRow(
-                              channel = ch,
-                              epgRepo = epgRepo,
-                              isFav = favs.value.contains(ch.tvgId ?: ch.name),
-                              onToggleFav = {
-                                  val set = onToggleFav(ch.tvgId ?: ch.name); favs.value = set
-                              },
-                              onOpen = { onOpen(ch) }
-                          )
-                          Divider()
-                      }
-                  }
-              }
-          }
+    fun loadFromXtream(
+        context: Context,
+        server: String,
+        user: String,
+        pass: String,
+        output: String,
+        epgUrl: String?
+    ) {
+        val base = server.trim().trimEnd('/')
+        val m3u = "$base/get.php?username=${enc(user)}&password=${enc(pass)}&type=m3u_plus&output=${enc(output.ifBlank { "ts" })}"
+        loadAll(m3u, epgUrl)
+    }
 
-          @Composable
-          fun ChannelRow(
-              channel: Channel,
-              epgRepo: EpgRepository?,
-              isFav:Boolean,
-              onToggleFav:()->Unit,
-              onOpen:()->Unit
-          ) {
-              Row(Modifier.fillMaxWidth().clickable { onOpen() }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                  AsyncImage(model=channel.logo, contentDescription=channel.name, modifier=Modifier.size(48.dp))
-                  Spacer(Modifier.width(12.dp))
-                  Column(Modifier.weight(1f)) {
-                      Text(channel.name, style=MaterialTheme.typography.titleMedium)
-                      val key = channel.tvgId ?: channel.name
-                      if (epgRepo!=null && epgRepo.hasDataFor(key)) {
-                          val nn = epgRepo.nowNext(key)
-                          val nowTitle = nn.now?.title ?: "Sin datos"
-                          val nextTitle = nn.next?.title?.let { " • Siguiente: $it" } ?: ""
-                          Text("$nowTitle$nextTitle", style=MaterialTheme.typography.bodySmall)
-                      } else if (channel.group.isNotBlank()) {
-                          Text(channel.group, style=MaterialTheme.typography.bodySmall)
-                      }
-                      channel.language?.let { Text("Idioma: " + it.uppercase(), style=MaterialTheme.typography.bodySmall) }
-                  }
-                  Spacer(Modifier.width(8	dp))
-                  AssistChip(onClick=onToggleFav, label={ Text(if (isFav) "★" else "☆") })
-              }
-          }
-          EOF
+    private fun enc(s: String) = URLEncoder.encode(s, StandardCharsets.UTF_8.name())
+
+    private fun loadAll(m3uUrl: String, epgUrl: String?) {
+        _ui.value = UIState.Loading
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = Network.fetchText(m3uUrl)
+                    val channels = M3UParser.parse(text)
+                    val epgRepo = if (!epgUrl.isNullOrBlank()) {
+                        EpgRepository().apply { load(Network.fetchText(epgUrl)) }
+                    } else null
+                    channels to epgRepo
+                }
+            }
+            result.fold(
+                onSuccess = { (channels, epg) ->
+                    if (channels.isEmpty()) {
+                        _ui.value = UIState.Input(error = "No encontré canales. Revisa la URL/credenciales o prueba con otra lista.")
+                    } else {
+                        _ui.value = UIState.ChannelList(channels, epg)
+                    }
+                },
+                onFailure = { e ->
+                    _ui.value = UIState.Input(error = "Error al cargar: ${e.message ?: "desconocido"}")
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun LoadingScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            Text("Cargando…")
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InputScreen(
+    state: UIState.Input,
+    onLoadM3U: (String, String?) -> Unit,
+    onLoadXtream: (String, String, String, String, String?) -> Unit
+) {
+    var tab by remember { mutableStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = tab) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("M3U") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Xtream") })
+        }
+        when (tab) {
+            0 -> M3UTab(onLoad = onLoadM3U, error = state.error)
+            1 -> XtreamTab(onLoad = onLoadXtream, error = state.error)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun M3UTab(onLoad: (String, String?) -> Unit, error: String?) {
+    var url by remember { mutableStateOf(TextFieldValue("")) }
+    var epg by remember { mutableStateOf(TextFieldValue("")) }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+            OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("M3U/M3U8 URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = epg, onValueChange = { epg = it }, label = { Text("EPG XMLTV (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onLoad(url.text.trim(), epg.text.trim().ifBlank { null }) },
+                enabled = url.text.startsWith("http")
+            ) { Text("Cargar") }
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun XtreamTab(onLoad: (String, String, String, String, String?) -> Unit, error: String?) {
+    var server by remember { mutableStateOf(TextFieldValue("")) }
+    var user by remember { mutableStateOf(TextFieldValue("")) }
+    var pass by remember { mutableStateOf(TextFieldValue("")) }
+    var output by remember { mutableStateOf(TextFieldValue("ts")) }
+    var epg by remember { mutableStateOf(TextFieldValue("")) }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+            OutlinedTextField(value = server, onValueChange = { server = it }, label = { Text("Servidor/DNS (http[s]://host)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Usuario") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Contraseña") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = output, onValueChange = { output = it }, label = { Text("output (ts o hls)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = epg, onValueChange = { epg = it }, label = { Text("EPG XMLTV (opcional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(12.dp))
+            val ok = server.text.startsWith("http") && user.text.isNotBlank() && pass.text.isNotBlank()
+            Button(
+                onClick = { onLoad(server.text.trim(), user.text.trim(), pass.text.trim(), output.text.trim().ifBlank { "ts" }, epg.text.trim().ifBlank { null }) },
+                enabled = ok
+            ) { Text("Cargar") }
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelListScreen(
+    channels: List<Channel>,
+    epgRepo: EpgRepository?,
+    favSetProvider: () -> Set<String>,
+    onToggleFav: (String) -> Set<String>,
+    onOpen: (Channel) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val languages = remember(channels) { channels.mapNotNull { it.language }.toSet().toList().sorted() }
+    var selectedLang by remember { mutableStateOf<String?>(null) }
+    var onlyFav by remember { mutableStateOf(false) }
+    val favs = remember { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(Unit) { favs.value = favSetProvider() }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("Buscar") }, singleLine = true, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            AssistChip(onClick = { onlyFav = !onlyFav }, label = { Text(if (onlyFav) "Favoritos ✓" else "Favoritos") })
+        }
+        if (languages.isNotEmpty()) {
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                FilterChip(selected = selectedLang == null, onClick = { selectedLang = null }, label = { Text("Todos") })
+                Spacer(Modifier.width(8.dp))
+                languages.forEach { lang ->
+                    Spacer(Modifier.width(4.dp))
+                    FilterChip(selected = selectedLang == lang, onClick = { selectedLang = lang }, label = { Text(lang.uppercase()) })
+                }
+            }
+        }
+        val filtered = channels.filter { ch ->
+            val matchQ = ch.name.contains(query, true) || ch.group.contains(query, true)
+            val matchLang = selectedLang?.let { ch.language == it } ?: true
+            val key = ch.tvgId ?: ch.name
+            val matchFav = if (onlyFav) favs.value.contains(key) else true
+            matchQ && matchLang && matchFav
+        }
+        if (filtered.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No hay canales que mostrar.")
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(filtered) { ch ->
+                    ChannelRow(
+                        channel = ch,
+                        epgRepo = epgRepo,
+                        isFav = favs.value.contains(ch.tvgId ?: ch.name),
+                        onToggleFav = {
+                            val set = onToggleFav(ch.tvgId ?: ch.name); favs.value = set
+                        },
+                        onOpen = { onOpen(ch) }
+                    )
+                    Divider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelRow(
+    channel: Channel,
+    epgRepo: EpgRepository?,
+    isFav: Boolean,
+    onToggleFav: () -> Unit,
+    onOpen: () -> Unit
+) {
+    Row(Modifier.fillMaxWidth().clickable { onOpen() }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        AsyncImage(model = channel.logo, contentDescription = channel.name, modifier = Modifier.size(48.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(channel.name, style = MaterialTheme.typography.titleMedium)
+            val key = channel.tvgId ?: channel.name
+            if (epgRepo != null && epgRepo.hasDataFor(key)) {
+                val nn = epgRepo.nowNext(key)
+                val nowTitle = nn.now?.title ?: "Sin datos"
+                val nextTitle = nn.next?.title?.let { " • Siguiente: $it" } ?: ""
+                Text("$nowTitle$nextTitle", style = MaterialTheme.typography.bodySmall)
+            } else if (channel.group.isNotBlank()) {
+                Text(channel.group, style = MaterialTheme.typography.bodySmall)
+            }
+            channel.language?.let { Text("Idioma: " + it.uppercase(), style = MaterialTheme.typography.bodySmall) }
+        }
+        Spacer(Modifier.width(8.dp))
+        AssistChip(onClick = onToggleFav, label = { Text(if (isFav) "★" else "☆") })
+    }
+}
+EOF
       - name: Normaliza Kotlin (arregla `8 dp` → `8.dp`)
         run: |
           # Convierte cualquier número + espacio/tabs + dp  ->  número.dp
