@@ -613,7 +613,12 @@ jobs:
               }
           }
           EOF
-
+      - name: Normaliza Kotlin (arregla `8 dp` → `8.dp`)
+        run: |
+          # Convierte cualquier número + espacio/tabs + dp  ->  número.dp
+          find M3UStream/app/src -name '*.kt' -print0 | xargs -0 sed -E -i 's/([0-9])[[:space:]]+dp/\1.dp/g'
+          # Muestra si quedó algo sospechoso
+          grep -RIn --include='*.kt' -E '[0-9][[:space:]]+dp' M3UStream/app/src || true
       - name: Generate Gradle Wrapper
         uses: gradle/gradle-build-action@v3
         with:
