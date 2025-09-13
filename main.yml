@@ -27,7 +27,7 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       # ──────────────────────────────────────────────────────────────────────────
-      # Genera el proyecto + gradle.properties con AndroidX activado
+      # Crea el proyecto Android (con AndroidX) usando heredocs seguros (bash)
       # ──────────────────────────────────────────────────────────────────────────
       - name: Create Android project
         shell: bash
@@ -37,7 +37,7 @@ jobs:
           mkdir -p M3UStream/app/src/main/res/values
           mkdir -p M3UStream/app/src/main/res/mipmap-anydpi-v26
 
-          # gradle.properties → AndroidX ON + suprimir warning de compileSdk 35
+          # gradle.properties → AndroidX ON + suprime warning compileSdk 35
           cat > M3UStream/gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2g -Dkotlin.daemon.jvm.options=-Xmx1g
           android.useAndroidX=true
@@ -324,7 +324,7 @@ jobs:
           }
           EOF
 
-          # Player
+          # Player (ExoPlayer + PIP) — con import de dp y botón cerrar
           cat > M3UStream/app/src/main/java/com/example/m3ustream/player/PlayerScreen.kt <<'EOF'
           package com.example.m3ustream.player
           import android.app.Activity
@@ -334,25 +334,33 @@ jobs:
           import androidx.compose.runtime.*
           import androidx.compose.ui.Modifier
           import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.unit.dp
           import androidx.compose.ui.viewinterop.AndroidView
           import com.example.m3ustream.playlist.Channel
           import com.google.android.exoplayer2.ExoPlayer
           import com.google.android.exoplayer2.MediaItem
           import com.google.android.exoplayer2.ui.StyledPlayerView
           import android.view.ViewGroup
+
           @Composable
-          fun PlayerScreen(channel: Channel) {
+          fun PlayerScreen(channel: Channel, onClose: () -> Unit) {
               val ctx = LocalContext.current
               val exo = remember { ExoPlayer.Builder(ctx).build().apply {
-                  setMediaItem(MediaItem.fromUri(channel.url)); prepare(); playWhenReady = true } }
+                  setMediaItem(MediaItem.fromUri(channel.url)); prepare(); playWhenReady = true
+              } }
               DisposableEffect(Unit) { onDispose { exo.release() } }
               Column(Modifier.fillMaxSize()) {
                   AndroidView(factory = { c -> StyledPlayerView(c).apply {
                       player = exo
-                      layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                      layoutParams = ViewGroup.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.WRAP_CONTENT
+                      )
                   }}, modifier = Modifier.fillMaxWidth())
                   Spacer(Modifier.weight(1f))
                   Row(Modifier.padding(12.dp)) {
+                      Button(onClick = onClose) { Text("Cerrar") }
+                      Spacer(Modifier.width(8.dp))
                       val act = ctx as? Activity
                       Button(onClick = { act?.enterPictureInPictureMode() }) { Text("PIP") }
                   }
@@ -360,9 +368,10 @@ jobs:
           }
           EOF
 
-          # MainActivity (corregidos 6.dp / 12.dp / 4.dp)
+          # MainActivity con estado 'playing' y lambdas corregidas
           cat > M3UStream/app/src/main/java/com/example/m3ustream/MainActivity.kt <<'EOF'
           package com.example.m3ustream
+
           import android.content.Context
           import android.os.Bundle
           import androidx.activity.ComponentActivity
@@ -398,18 +407,26 @@ jobs:
                   setContent {
                       MaterialTheme(colorScheme = darkColorScheme()) {
                           val state = vm.uiState.value
-                          when (state) {
-                              is UIState.Input -> InputScreen(
-                                  initial = state,
-                                  onLoadM3U = { url, epg -> vm.loadFromM3U(this, url, epg) },
-                                  onLoadXtream = { server, user, pass, output, epg -> vm.loadFromXtream(this, server, user, pass, output, epg) }
-                              )
-                              is UIState.ChannelList -> ChannelListScreen(
-                                  channels = state.channels, epgRepo = state.epg,
-                                  favSetProvider = { Prefs.favs(this) },
-                                  onToggleFav = { key -> Prefs.toggleFav(this, key) },
-                                  onOpen = { ch -> PlayerScreen(ch) }
-                              )
+                          var playing by remember { mutableStateOf<Channel?>(null) }
+                          if (playing != null) {
+                              PlayerScreen(channel = playing!!, onClose = { playing = null })
+                          } else {
+                              when (state) {
+                                  is UIState.Input -> InputScreen(
+                                      initial = state,
+                                      onLoadM3U = { url, epg -> vm.loadFromM3U(this, url, epg) },
+                                      onLoadXtream = { server, user, pass, output, epg ->
+                                          vm.loadFromXtream(this, server, user, pass, output, epg)
+                                      }
+                                  )
+                                  is UIState.ChannelList -> ChannelListScreen(
+                                      channels = state.channels,
+                                      epgRepo = state.epg,
+                                      favSetProvider = { Prefs.favs(this) },
+                                      onToggleFav = { key -> Prefs.toggleFav(this, key) },
+                                      onOpen = { ch -> playing = ch }
+                                  )
+                              }
                           }
                       }
                   }
@@ -427,6 +444,7 @@ jobs:
           class MainViewModel : ViewModel() {
               private val _uiState = mutableStateOf<UIState>(UIState.Input())
               val uiState: State<UIState> get() = _uiState
+
               fun loadFromM3U(context: Context, url: String, epgUrl: String?) = loadAll(url, epgUrl)
               fun loadFromXtream(context: Context, server:String, user:String, pass:String, output:String, epgUrl:String?) {
                   val base = server.trim().trimEnd('/')
@@ -436,7 +454,9 @@ jobs:
               private fun enc(s:String) = URLEncoder.encode(s, StandardCharsets.UTF_8.name())
               private fun loadAll(m3uUrl:String, epgUrl:String?) {
                   viewModelScope.launch {
-                      val channels = withContext(Dispatchers.IO) { runCatching { M3UParser.parse(Network.fetchText(m3uUrl)) }.getOrElse { emptyList() } }
+                      val channels = withContext(Dispatchers.IO) {
+                          runCatching { M3UParser.parse(Network.fetchText(m3uUrl)) }.getOrElse { emptyList() }
+                      }
                       val epgRepo = if (!epgUrl.isNullOrBlank()) withContext(Dispatchers.IO) {
                           runCatching { EpgRepository().apply { load(Network.fetchText(epgUrl)) } }.getOrNull()
                       } else null
@@ -489,21 +509,28 @@ jobs:
                       OutlinedTextField(value=server, onValueChange={server=it}, label={Text("Servidor/DNS (http[s]://host)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
                       OutlinedTextField(value=user, onValueChange={user=it}, label={Text("Usuario")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
+                      Spacer(Modifier.height(6	dp))
                       OutlinedTextField(value=pass, onValueChange={pass=it}, label={Text("Contraseña")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
+                      Spacer(Modifier.height(6	dp))
                       OutlinedTextField(value=output, onValueChange={output=it}, label={Text("output (ts o hls)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
+                      Spacer(Modifier.height(6	dp))
                       OutlinedTextField(value=epg, onValueChange={epg=it}, label={Text("EPG XMLTV (opcional)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(12.dp))
+                      Spacer(Modifier.height(12	dp))
                       val ok = server.text.startsWith("http") && user.text.isNotBlank() && pass.text.isNotBlank()
                       Button(onClick={ onLoad(server.text.trim(), user.text.trim(), pass.text.trim(), output.text.trim().ifBlank{"ts"}, epg.text.trim().ifBlank{null}) }, enabled=ok) { Text("Cargar") }
                   }
               }
           }
 
+          @OptIn(ExperimentalMaterial3Api::class)
           @Composable
-          fun ChannelListScreen(channels: List<Channel>, epgRepo: EpgRepository?, favSetProvider:()->Set<String>, onToggleFav:(String)->Set<String>, onOpen:(Channel)->Unit) {
+          fun ChannelListScreen(
+              channels: List<Channel>,
+              epgRepo: EpgRepository?,
+              favSetProvider:()->Set<String>,
+              onToggleFav:(String)->Set<String>,
+              onOpen:(Channel)->Unit
+          ) {
               var query by remember { mutableStateOf("") }
               val languages = remember(channels) { channels.mapNotNull { it.language }.toSet().toList().sorted() }
               var selectedLang by remember { mutableStateOf<String?>(null) }
@@ -513,15 +540,15 @@ jobs:
               Column(Modifier.fillMaxSize()) {
                   Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                       OutlinedTextField(value=query, onValueChange={query=it}, label={Text("Buscar")}, singleLine=true, modifier=Modifier.weight(1f))
-                      Spacer(Modifier.width(8.dp))
+                      Spacer(Modifier.width(8	dp))
                       AssistChip(onClick={ onlyFav = !onlyFav }, label={ Text(if (onlyFav) "Favoritos ✓" else "Favoritos") })
                   }
                   if (languages.isNotEmpty()) {
-                      Row(Modifier.padding(horizontal=8.dp, vertical=4.dp)) {
+                      Row(Modifier.padding(horizontal=8	dp, vertical=4	dp)) {
                           FilterChip(selected=selectedLang==null, onClick={ selectedLang=null }, label={ Text("Todos") })
-                          Spacer(Modifier.width(8.dp))
+                          Spacer(Modifier.width(8	dp))
                           languages.forEach { lang ->
-                              Spacer(Modifier.width(4.dp))
+                              Spacer(Modifier.width(4	dp))
                               FilterChip(selected=selectedLang==lang, onClick={ selectedLang=lang }, label={ Text(lang.uppercase()) })
                           }
                       }
@@ -535,9 +562,15 @@ jobs:
                   }
                   LazyColumn(Modifier.fillMaxSize()) {
                       items(filtered) { ch ->
-                          ChannelRow(ch, epgRepo, isFav = favs.value.contains(ch.tvgId ?: ch.name)) {
-                              val set = onToggleFav(ch.tvgId ?: ch.name); favs.value = set
-                          } onOpen@{ onOpen(ch) }
+                          ChannelRow(
+                              channel = ch,
+                              epgRepo = epgRepo,
+                              isFav = favs.value.contains(ch.tvgId ?: ch.name),
+                              onToggleFav = {
+                                  val set = onToggleFav(ch.tvgId ?: ch.name); favs.value = set
+                              },
+                              onOpen = { onOpen(ch) }
+                          )
                           Divider()
                       }
                   }
@@ -545,7 +578,13 @@ jobs:
           }
 
           @Composable
-          fun ChannelRow(channel: Channel, epgRepo: EpgRepository?, isFav:Boolean, onToggleFav:()->Unit, onOpen:()->Unit) {
+          fun ChannelRow(
+              channel: Channel,
+              epgRepo: EpgRepository?,
+              isFav:Boolean,
+              onToggleFav:()->Unit,
+              onOpen:()->Unit
+          ) {
               Row(Modifier.fillMaxWidth().clickable { onOpen() }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                   AsyncImage(model=channel.logo, contentDescription=channel.name, modifier=Modifier.size(48.dp))
                   Spacer(Modifier.width(12.dp))
@@ -562,13 +601,13 @@ jobs:
                       }
                       channel.language?.let { Text("Idioma: " + it.uppercase(), style=MaterialTheme.typography.bodySmall) }
                   }
-                  Spacer(Modifier.width(8.dp))
+                  Spacer(Modifier.width(8	dp))
                   AssistChip(onClick=onToggleFav, label={ Text(if (isFav) "★" else "☆") })
               }
           }
           EOF
 
-      # Genera el Gradle Wrapper (sí, usa la acción antigua solo para esto)
+      # Genera el Gradle Wrapper (sí, con la acción clásica para bootstrapping)
       - name: Generate Gradle Wrapper
         uses: gradle/gradle-build-action@v3
         with:
@@ -576,7 +615,7 @@ jobs:
           build-root-directory: M3UStream
           arguments: wrapper
 
-      # Compila usando el wrapper
+      # Compila con el wrapper
       - name: Build Debug APK
         run: |
           cd M3UStream
