@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/build.yml'
+      - '.github/workflows/main.yml'
 
 jobs:
   build:
@@ -37,7 +37,8 @@ jobs:
           def w(p, c):
               p.parent.mkdir(parents=True, exist_ok=True)
               p.write_text(textwrap.dedent(c).lstrip(), encoding="utf-8")
-          # settings.gradle
+
+          # Gradle settings + root build
           w(ROOT/"settings.gradle", """
           pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
           dependencyResolutionManagement {
@@ -47,7 +48,6 @@ jobs:
           rootProject.name = "M3UStream"
           include(":app")
           """)
-          # root build.gradle
           w(ROOT/"build.gradle", """
           buildscript {
               ext { compose_ui_version = '1.6.8' }
@@ -58,7 +58,8 @@ jobs:
               }
           }
           """)
-          # app/build.gradle (API 35 para que compile online sin líos)
+
+          # app/build.gradle (API 35)
           w(ROOT/"app"/"build.gradle", """
           apply plugin: 'com.android.application'
           apply plugin: 'org.jetbrains.kotlin.android'
@@ -106,12 +107,11 @@ jobs:
               coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
           }
           """)
-          # proguard
+
+          # proguard (vacío)
           w(ROOT/"app"/"proguard-rules.pro", "# vacío")
+
           # Manifest
-          APP = ROOT/"app"/"src"/"main"
-          JAVA= APP/"java"/"com"/"example"/"m3ustream"
-          RES = APP/"res"
           w(APP/"AndroidManifest.xml", """
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -135,10 +135,9 @@ jobs:
               </application>
           </manifest>
           """)
-          # recursos mínimos
-          w(RES/"values"/"strings.xml", """
-          <resources><string name="app_name">M3UStream</string></resources>
-          """)
+
+          # Recursos mínimos
+          w(RES/"values"/"strings.xml", "<resources><string name=\"app_name\">M3UStream</string></resources>\n")
           w(RES/"mipmap-anydpi-v26"/"ic_launcher.xml", """
           <?xml version="1.0" encoding="utf-8"?>
           <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -153,7 +152,8 @@ jobs:
               <foreground android:drawable="@android:color/white"/>
           </adaptive-icon>
           """)
-          # Kotlin base
+
+          # Código Kotlin (App, red, prefs)
           w(JAVA/"App.kt", "package com.example.m3ustream\nimport android.app.Application\nclass App: Application()\n")
           w(JAVA/"Network.kt", """
           package com.example.m3ustream
@@ -182,6 +182,7 @@ jobs:
               }
           }
           """)
+
           # Playlist + parser (idioma + tvg-id)
           w(JAVA/"playlist"/"Channel.kt", """
           package com.example.m3ustream.playlist
@@ -245,8 +246,13 @@ jobs:
               }
           }
           """)
-          # EPG mínimo (XMLTV) con Now/Next
-          w(JAVA/"epg"/"EpgModels.kt", "package com.example.m3ustream.epg\ndata class EpgProgramme(val channelId:String,val title:String,val startMs:Long,val stopMs:Long)\ndata class NowNext(val now:EpgProgramme?,val next:EpgProgramme?)\n")
+
+          # EPG mínimo (XMLTV) + Now/Next (UTC simple)
+          w(JAVA/"epg"/"EpgModels.kt", """
+          package com.example.m3ustream.epg
+          data class EpgProgramme(val channelId:String,val title:String,val startMs:Long,val stopMs:Long)
+          data class NowNext(val now:EpgProgramme?,val next:EpgProgramme?)
+          """)
           w(JAVA/"epg"/"EpgRepository.kt", r"""
           package com.example.m3ustream.epg
           import android.util.Xml
@@ -289,20 +295,17 @@ jobs:
               companion object {
                   private val F = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
                   fun parse(s:String?):Long{
-                      if (s==null or s!!.length<14) return 0
+                      if (s==null || s.length<14) return 0
                       return try {
-                          val core = s.substring(0,14); val rest = s.substring(14).trim()
+                          val core = s.substring(0,14)
                           val dt = LocalDateTime.parse(core,F)
-                          if (rest.matches(Regex("[+-]\\d{4}"))) {
-                              val sign = -1 if rest.startswith("-") else 1
-                              val hh = rest[1:3]; val mm = rest[3:5]
-                          }
                           dt.toInstant(ZoneOffset.UTC).toEpochMilli()
                       } catch (_:Throwable){ 0 }
                   }
               }
           }
-          """.replace("sign = -1 if rest.startswith(\"-\") else 1","sign = -1 if rest.startswith('-') else 1").replace("rest[1:3]","rest[1:3]").replace("rest[3:5]","rest[3:5]"))
+          """)
+
           # Player (ExoPlayer + PIP)
           w(JAVA/"player"/"PlayerScreen.kt", """
           package com.example.m3ustream.player
@@ -337,7 +340,8 @@ jobs:
               }
           }
           """)
-          # MainActivity (M3U + Xtream + filtro idioma + EPG + favoritos)
+
+          # UI principal (M3U + Xtream + filtro idioma + EPG + favoritos)
           w(JAVA/"MainActivity.kt", r"""
           package com.example.m3ustream
           import android.content.Context
@@ -374,7 +378,7 @@ jobs:
                   super.onCreate(savedInstanceState)
                   setContent {
                       MaterialTheme(colorScheme = darkColorScheme()) {
-                          val state by vm.uiState.collectAsState()
+                          val state by vm.uiState
                           when (val s = state) {
                               is UIState.Input -> InputScreen(
                                   initial = s,
@@ -392,6 +396,7 @@ jobs:
                   }
               }
           }
+
           sealed class UIState {
               data class Input(
                   val m3uUrl: String? = null, val epgUrl: String? = null,
@@ -399,17 +404,19 @@ jobs:
               ) : UIState()
               data class ChannelList(val channels: List<Channel>, val epg: EpgRepository?) : UIState()
           }
+
           class MainViewModel : ViewModel() {
               private val _uiState = mutableStateOf<UIState>(UIState.Input())
               val uiState: State<UIState> get() = _uiState
-              fun loadFromM3U(context: Context, url: String, epgUrl: String?) { loadAll(context, url, epgUrl) }
+
+              fun loadFromM3U(context: Context, url: String, epgUrl: String?) = loadAll(url, epgUrl)
               fun loadFromXtream(context: Context, server:String, user:String, pass:String, output:String, epgUrl:String?) {
                   val base = server.trim().trimEnd('/')
-                  val m3u = f"{base}/get.php?username=" + enc(user) + "&password=" + enc(pass) + "&type=m3u_plus&output=" + enc(output)
-                  loadAll(context, m3u, epgUrl)
+                  val m3u = "$base/get.php?username=${'$'}{enc(user)}&password=${'$'}{enc(pass)}&type=m3u_plus&output=${'$'}{enc(output)}"
+                  loadAll(m3u, epgUrl)
               }
-              private fun enc(s:String):String = URLEncoder.encode(s, StandardCharsets.UTF_8.name())
-              private fun loadAll(context: Context, m3uUrl:String, epgUrl:String?) {
+              private fun enc(s:String) = URLEncoder.encode(s, StandardCharsets.UTF_8.name())
+              private fun loadAll(m3uUrl:String, epgUrl:String?) {
                   viewModelScope.launch {
                       val channels = withContext(Dispatchers.IO) { runCatching { M3UParser.parse(Network.fetchText(m3uUrl)) }.getOrElse { emptyList() } }
                       val epgRepo = if (!epgUrl.isNullOrBlank()) withContext(Dispatchers.IO) {
@@ -419,6 +426,7 @@ jobs:
                   }
               }
           }
+
           @Composable
           fun InputScreen(initial: UIState.Input, onLoadM3U:(String,String?)->Unit, onLoadXtream:(String,String,String,String,String?)->Unit) {
               var tab by remember { mutableStateOf(0) }
@@ -433,6 +441,7 @@ jobs:
                   }
               }
           }
+
           @OptIn(ExperimentalMaterial3Api::class)
           @Composable
           fun M3UTab(onLoad:(String,String?)->Unit) {
@@ -448,6 +457,7 @@ jobs:
                   }
               }
           }
+
           @OptIn(ExperimentalMaterial3Api::class)
           @Composable
           fun XtreamTab(onLoad:(String,String,String,String,String?)->Unit) {
@@ -463,16 +473,17 @@ jobs:
                       OutlinedTextField(value=user, onValueChange={user=it}, label={Text("Usuario")}, singleLine=true, modifier=Modifier.fillMaxWidth())
                       Spacer(Modifier.height(6.dp))
                       OutlinedTextField(value=pass, onValueChange={pass=it}, label={Text("Contraseña")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
+                      Spacer(Modifier.height(6	dp))
                       OutlinedTextField(value=output, onValueChange={output=it}, label={Text("output (ts o hls)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(6.dp))
+                      Spacer(Modifier.height(6	dp))
                       OutlinedTextField(value=epg, onValueChange={epg=it}, label={Text("EPG XMLTV (opcional)")}, singleLine=true, modifier=Modifier.fillMaxWidth())
-                      Spacer(Modifier.height(12.dp))
+                      Spacer(Modifier.height(12	dp))
                       val ok = server.text.startsWith("http") && user.text.isNotBlank() && pass.text.isNotBlank()
                       Button(onClick={ onLoad(server.text.trim(), user.text.trim(), pass.text.trim(), output.text.trim().ifBlank{"ts"}, epg.text.trim().ifBlank{null}) }, enabled=ok) { Text("Cargar") }
                   }
               }
           }
+
           @Composable
           fun ChannelListScreen(channels: List<Channel>, epgRepo: EpgRepository?, favSetProvider:()->Set<String>, onToggleFav:(String)->Set<String>, onOpen:(Channel)->Unit) {
               var query by remember { mutableStateOf("") }
@@ -488,11 +499,11 @@ jobs:
                       AssistChip(onClick={ onlyFav = !onlyFav }, label={ Text(if (onlyFav) "Favoritos ✓" else "Favoritos") })
                   }
                   if (languages.isNotEmpty()) {
-                      Row(Modifier.padding(horizontal=8.dp, vertical=4.dp)) {
+                      Row(Modifier.padding(horizontal=8.dp, vertical=4	dp)) {
                           FilterChip(selected=selectedLang==null, onClick={ selectedLang=null }, label={ Text("Todos") })
-                          Spacer(Modifier.width(8.dp))
+                          Spacer(Modifier.width(8	dp))
                           languages.forEach { lang ->
-                              Spacer(Modifier.width(4.dp))
+                              Spacer(Modifier.width(4	dp))
                               FilterChip(selected=selectedLang==lang, onClick={ selectedLang=lang }, label={ Text(lang.uppercase()) })
                           }
                       }
@@ -514,6 +525,7 @@ jobs:
                   }
               }
           }
+
           @Composable
           fun ChannelRow(channel: Channel, epgRepo: EpgRepository?, isFav:Boolean, onToggleFav:()->Unit, onOpen:()->Unit) {
               Row(Modifier.fillMaxWidth().clickable { onOpen() }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -526,17 +538,24 @@ jobs:
                           val nn = remember(epgRepo, key) { epgRepo.nowNext(key) }
                           val nowTitle = nn.now?.title ?: "Sin datos"
                           val nextTitle = nn.next?.title?.let { " • Siguiente: $it" } ?: ""
-                          Text(f"{nowTitle}{nextTitle}", style=MaterialTheme.typography.bodySmall)
+                          Text("$nowTitle$nextTitle", style=MaterialTheme.typography.bodySmall)
                       } else if (channel.group.isNotBlank()) {
                           Text(channel.group, style=MaterialTheme.typography.bodySmall)
                       }
                       channel.language?.let { Text("Idioma: " + it.uppercase(), style=MaterialTheme.typography.bodySmall) }
                   }
                   Spacer(Modifier.width(8.dp))
-                  AssistChip(onClick=onToggleFav, label={ Text("★" if isFav else "☆") })
+                  AssistChip(onClick=onToggleFav, label={ Text(if (isFav) "★" else "☆") })
               }
           }
           PY
+
+      - name: Generate Gradle Wrapper
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.2.1'
+          build-root-directory: M3UStream
+          arguments: wrapper
 
       - name: Build Debug APK
         uses: gradle/gradle-build-action@v3
